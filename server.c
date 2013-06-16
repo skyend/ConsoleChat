@@ -556,7 +556,7 @@ result stream_interpreter(client *_client )
       pro_reg_name *prn = (pro_reg_name*)_client->stream_body;
       
       // 메모리 복사 널문자와 줄바꿈 문자 제외
-      memcpy(_client->name, prn->name, strlen(prn->name) );
+      memcpy(_client->name, prn->name, NAME_SIZE );
       
       // 등록 알림
       printf("- notice \n\tregistered name: %s [%s]\n", _client->name, _client->IP);
