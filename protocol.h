@@ -65,7 +65,7 @@ typedef enum {
   
   // Transfer  
   TRANSFER_CHAT_MESSAGE, // 채팅 메세지 전송
-  
+   
   // Register
   REGISTER_NAME, // 이름 등록
   
@@ -248,4 +248,3 @@ void stream_sender(int fd, stream_purposes type, void *data_ptr, int size){
   write( fd , (char*)data_ptr, size );
   
 }
-

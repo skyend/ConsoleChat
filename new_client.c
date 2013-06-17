@@ -1,6 +1,13 @@
 #include "protocol.h"
 #include "client.h"
 
+#define DEBUG 0
+
+// Client Variable
+client_state state;
+
+
+
 int main ( int argc, char * argv[] )
 {
   printf("Using %d Byte \n", (int)sizeof(clients));
@@ -22,8 +29,9 @@ int main ( int argc, char * argv[] )
   
 
   // Client Variable
-  client_state state = cstate_command_input;
   client client; // 클라이언트 구조체 ( 자기자신 )
+  
+  
 
 
   if(argc != 3){
@@ -48,8 +56,14 @@ int main ( int argc, char * argv[] )
 
   // -------------------------- SOCKET SETTING ----------------------------------
 
-
+  // Client 구조체 초기화
+  client.fd = sock;
+  client.stream_state = EMPTY;
+  client.available = true;
   
+  state = cstate_command_input;  
+
+
 
   // reads 초기화
   FD_ZERO( &reads );
@@ -67,7 +81,7 @@ int main ( int argc, char * argv[] )
     timeout.tv_sec = 100;
     timeout.tv_usec = 5000;
     
-    print_by_state(state);
+    print_by_state(state, &client);
     
     if( (fd_num = select( fd_max+1, &temps, 0, 0, &timeout)) == -1 )
       break;
@@ -86,35 +100,94 @@ int main ( int argc, char * argv[] )
 	      
 	      // 클라이언트 상태별 처리분기
 	      switch(state){
+
+		// 명령 선택 상태
 	      case cstate_command_input :
 		{
 		  scanf(" %d", (int*)&command);
 		  state = command;
 		  
+		  // 선택한 명령의 번호에 따른 처리 분기
 		  switch(command){
-		  case ccmd_register_name :
-		    
+		  case ccmd_register_name : // 이름등록
+
 		    state = cstate_input_new_name;
+		    // 완료
 		    break;
+		    
+		  case ccmd_request_chat : // 채팅요청
+		    {
+		      pro_req_matching_chat prmc;
+		      
+		      if( request_chat_dialog( &prmc ) ){
+			
+			
+			stream_sender(client.fd, REQUEST_MATCHING_CHAT,
+				      &prmc, sizeof(pro_req_matching_chat));
+
+			// 채팅 응답 대기 상태로 변경
+			state = cstate_wait_for_response_conn;
+		      }
+
+		    }
+		    break;
+		    
+		  case ccmd_logout : // 로그아웃
+
+		    //state = cstate_input_new_name;
+		    break;
+		    
+		  case ccmd_client_list : // 클라이언트리스트
+		    
+		    state = cstate_wait_for_client_list;
+		    
+		    // 클라이언트 리스트 요청 
+		    request_client_list(sock);
+		    break;
+
+		  case ccmd_file_transfer : // 파일전송
+		    
+		    //state = cstate_input_new_name;
+		    break;
+		    
+		  case ccmd_exit : // 종료
+		    
+		    exit(1);
+		    break;
+
 		  default :
 		    break;
 		  }
 		}
 		break;
-
+		
+		// 이름입력 상태일때
 	      case cstate_input_new_name :
 		{
 		  pro_reg_name pro_name;
 		  scanf(" %s",pro_name.name);
 		  stream_sender( sock, REGISTER_NAME, (void*)&pro_name, sizeof(pro_reg_name));
 		  state = cstate_command_input;
+
+		  memcpy(client.name, pro_name.name, NAME_SIZE);
 		}
 		break;
 		
-		
+	      case cstate_chat :
+		{
+		  pro_transfer_chat_message ptcm;
+		  
+		  // 메세지 입력받음
+		  scanf(" %s",ptcm.message);
+		  
+		  stream_sender(client.fd, SEND_MESSAGE_TO_ONE,
+				&ptcm, sizeof( pro_transfer_chat_message ) );
+
+		}
+		break;
 	      default :
 		fgets(buf, BUF_SIZE, stdin);
-		state = cstate_command_input;
+		//state = cstate_command_input;
 		break;
 		
 	      }
@@ -122,7 +195,32 @@ int main ( int argc, char * argv[] )
 	
 	      
 	    } else if ( i == sock ){ // Read
+	      /*
+		READ
+	      */
+	      packet_len = read(i , buf, BUF_SIZE);
 	      
+	      if( packet_len == 0 ) {
+		
+		// 소켓 닫기
+		close( sock );
+		// 연결 종료 알림
+		printf("closed from server \n");
+		break;
+	      }
+	      else{
+		stream_state stream_result;
+		
+		// 패킷 저장
+		stream_result = stream_put_to_ci(&client, buf, packet_len);
+		
+		// 패킷 저장후 패킷 스트림 상태에 따라 처리
+		if( stream_result == STREAM_END ){
+		  stream_interpreter(&client);
+		}
+		
+		
+	      }
 	    }
 	  }
       }
@@ -134,34 +232,66 @@ int main ( int argc, char * argv[] )
   return 1;
 }
 
-void print_by_state(client_state state)
+
+
+void print_by_state(client_state state, client* _client)
 {
   switch ( state ){
   case cstate_command_input :
 	
     printf("------------------- Commands --------------------\n");
-    printf("\t%d. 이름 등록(로그인) \n", ccmd_register_name);
-    printf("\t%d. 채팅 요청 \n", ccmd_request_chat);
-    printf("\t%d. 로그아웃 \n", ccmd_logout);
-    printf("\t%d. 뭐할까 \n", ccmd_why);
-    printf("\t%d. 파일전송 \n", ccmd_file_transfer);
-    printf("\t%d. 종료 \n", ccmd_exit);
+    printf("\t[%d] 이름 등록(로그인) \n", ccmd_register_name);
+    printf("\t[%d] 채팅 요청 \n", ccmd_request_chat);
+    printf("\t[%d] 로그아웃 \n", ccmd_logout);
+    printf("\t[%d] 접속 클라이언트 리스트 보기 \n", ccmd_client_list);
+    printf("\t[%d] 파일전송 \n", ccmd_file_transfer);
+    printf("\t[%d] 종료 \n", ccmd_exit);
     printf("-------------------------------------------------\n\n");
     
-    printf(" 명령어 번호를 입력하세요 :\n");
+    printf(" -> 명령어 번호를 입력하세요 :\n");
     
     break;
   case cstate_input_new_name :
-    
-    printf("이름을 입력하세요 : \n");
-    
+    printf("---------------------------------------\n");
+    printf("| 이름을 입력하세요                   |\n");
+    printf("---------------------------------------\n");
     
     break;
+  case cstate_wait_for_client_list :
+    printf("---------------------------------------\n");
+    printf("| 클라이언트 리스트를 기다리는 중입니다.\n");
+    printf("---------------------------------------\n");
+    
+    break;
+  case cstate_wait_for_response_conn :
+    printf("---------------------------------------\n");
+    printf("| 상대방의 응답을 기다리는 중입니다 .\n");
+    printf("---------------------------------------\n");
+
+  case cstate_wait_for_server_response :
+    printf("---------------------------------------\n");
+    printf("| 서버 응답을 기다리는 중입니다. \n");
+    printf("---------------------------------------\n");
+    
+  case cstate_chat :
+    printf("---------------------------------------\n");
+    printf("| 나:%s 상대:%s \n",_client->name, _client->p2p_name);
+    printf("---------------------------------------\n");
+
   default :
     break;
   }
       
 }
+
+void request_client_list(int fd)
+{
+
+  
+  stream_sender( fd, REQUEST_LIST, &tmpbyte, 1);  
+  
+}
+
 
 void error_handling(char *message )
 {
@@ -169,40 +299,18 @@ void error_handling(char *message )
   fputc('\n', stderr);
   exit(1);
 }
-
-// return 
-//   client or NULL
-client* c_search_from_fd(int fd)
-{
-  client * _client = NULL;
-  int i;
-  
-  // 클라이언트 구조체 배열을 순회하여 모든 클라이언트 구조체에 접근
-  for( i = 0; i < MAX_CON_USERS ; i++ ){
-    
-    // 해당인덱스에 있는 구조체 가져오기(참조)
-    _client = &clients[i];
-    
-    // 현재 인덱스에 있는 구조체가 찾는 구조체라면 포문종료
-    if( fd == _client->fd && _client->available == true )
-      break;
-    else 
-      _client = NULL; // 찾는 구조체가 아니라면 참조한 구조체 참조취소
-  }
-  
-  // 찾은 구조체 주소 반환
-  return _client; 
-}
-
-// 패킷 누적함수 :
+ 
+ 
+ 
 /*
+  - 패킷 누적함수 -
   패킷은 스트림을 이루는 연속된 바이트이다.
   스트림은 헤더와 바디 엔더로 나누어 지며
   헤더의 크기와 엔더의 크기는 고정이며
   바디의 크기는 가변이다. 바디의 크기는 헤더에 명시되어 있다.
 
 
- */
+*/
 stream_state stream_put_to_ci(client * _client, void *data, int size )
 {
   int i;
@@ -230,8 +338,8 @@ stream_state stream_put_to_ci(client * _client, void *data, int size )
 	if( _client->stream_header.complete == true ){
 	  
 	  // 유효한 헤더라면 헤더 정보 출력
-	  printf("- receive header\n");
-	  print_s_header( &_client->stream_header );
+	  if (DEBUG) printf("- receive header\n");
+	  if (DEBUG) print_s_header( &_client->stream_header );
 	  
 	  // body 데이터를 받을 준비 ( 초기화 )
 	  _client->stream_body_length = 0;
@@ -252,9 +360,10 @@ stream_state stream_put_to_ci(client * _client, void *data, int size )
       // 현재까지 받은 stream body 길이가 최대 길이 보다 크거나 같다면
       // 더이상 받지 않고 경고 출력
       if( _client->stream_body_length >= MAX_STREAM_BODY_SIZE ){
-	printf("warn : Over stream body \n");
 	
-	_client->stream_state = STREAM_ERROR;
+	  if (DEBUG)  printf("warn : Over stream body \n");
+	
+	  _client->stream_state = STREAM_ERROR;
 	return STREAM_ERROR;
       }
       
@@ -269,7 +378,8 @@ stream_state stream_put_to_ci(client * _client, void *data, int size )
 
       // 받을 사이즈와 현재 사이즈가 같다면
       if( _client->stream_body_length == _client->stream_header.stream_body_size ){
-	printf("- stream body all received \n");
+
+	if (DEBUG) printf("- stream body all received \n");
 
 	// 스트림 완료
 	_client->stream_state = STREAM_END;
@@ -296,7 +406,7 @@ stream_state stream_put_to_ci(client * _client, void *data, int size )
 // 처리를 수행한다.
 result stream_interpreter(client *_client )
 {
-  printf("[func] Stream interpreting.. \n");
+  if (DEBUG) printf("[func] Stream interpreting.. \n");
   
 
   // 스트림의 타입에 따른 처리 분기
@@ -304,11 +414,95 @@ result stream_interpreter(client *_client )
     // 디버그 메세지 
   case DEBUG_MESSAGE :
     {
-      printf("- DEBUG MESSAGE: \n\t%s\n\tfrom:%s[%s]\n", _client->stream_body, _client->IP, _client->name );
+      if (DEBUG) printf("- DEBUG MESSAGE: \n\t%s\n\tfrom:%s[%s]\n", _client->stream_body, _client->IP, _client->name );
     }
     break;
 
-  DEFAULT :
+  case RESPONSE_LIST :
+    {
+      //  리스트 데이터 출력
+      int a;
+
+      printf("Client List ====================\n");
+      for( a = 0 ; a < _client->stream_header.stream_body_size / sizeof(client_info) ; a++){
+	
+	// 메모리 영역 구조체로 형변환해서 순회
+	client_info *cinfo_ptr = ((client_info*)_client->stream_body) + a; // 구조체 포인터
+	
+	// 구조체 정보 출력
+	printf("\tname : %s \n\tip : %s \n--------------------------\n", 
+	       cinfo_ptr->name, cinfo_ptr->IP);
+      }
+      
+      state = cstate_command_input;
+    }
+    break;
+  case SUGGEST_CHAT :
+    {
+      pro_sug_chat *psc = (pro_sug_chat*)_client->stream_body;
+      
+      printf("[%s]님으로 부터 채팅요청이 왔습니다.\n 수락 하시겠습니까?\n", psc->who_name);
+      
+      // 수락할 경우 
+      if( yes_and_no() ){
+	pro_accept_chat pac;
+	strcpy(pac.who_name, psc->who_name);
+	pac.agree = true;
+
+	// 서버응답 대기상태로 변경
+	state = cstate_wait_for_server_response;
+
+
+	// 수락 메세지 전송 
+	stream_sender(_client->fd, RESPONSE_ACCEPT_CHAT,
+		      &pac, sizeof(pro_accept_chat));
+	
+
+      } else {
+	
+	pro_accept_chat pac;
+	strcpy(pac.who_name,_client->name);
+	pac.agree = false;
+	
+	state = cstate_command_input;
+
+	// 거절 메세지 전송 
+	stream_sender(_client->fd, RESPONSE_ACCEPT_CHAT,
+		      &pac, sizeof(pro_accept_chat));
+	
+
+      }
+
+    }
+    break;
+  case NOTICE_CHAT_CONNECT :
+    {
+      pro_notice_chat_connect *pncc = (pro_notice_chat_connect*)_client->stream_body;
+      
+      if( pncc->conn_state == connected ){
+	printf("=== [%s] 님과의 채팅이 시작되었습니다. ===\n", pncc->who_name );
+	
+	// 공지 후 채팅 모드로
+	state = cstate_chat;
+
+	// 대상 입력
+	memcpy(_client->p2p_name,pncc->who_name, NAME_SIZE);
+	_client->p2p_conn_state = connected;
+
+      }
+    }
+    break;
+    
+  case TRANSFER_CHAT_MESSAGE :
+    {
+      pro_transfer_chat_message *ptcm = (pro_transfer_chat_message*)_client->stream_body;
+      
+      //printf("[%s] : %s \n", ptcm->who_name, ptcm->message );
+      printf("상대방: %s \n",  ptcm->message );
+      
+    }
+    break;
+  default :
     break;
   }
   
@@ -316,6 +510,34 @@ result stream_interpreter(client *_client )
   
   return SUCCESS;
 }
+
+
+bool request_chat_dialog( pro_req_matching_chat *prmc )
+{
+  //char name[NAME_SIZE];
+  printf("채팅을 요청할 사람의 이름을 입력하세요 \n");
+  
+  scanf(" %s", prmc->name);
+
+  printf("당신이 채팅을 요청할 클라이언트 이름이 %s가 맞습니까?\n", prmc->name);
+  
+  return yes_and_no();
+}
+
+bool yes_and_no(){
+  char A[2];
+  printf("\t예(y) / 아니오(n)\n");
+  
+  scanf(" %s", A);
+
+
+  if( strcmp("y",A) == 0 || strcmp("Y",A) == 0 ){
+    return true;
+  } else if ( strcmp("n", A) == 0 || strcmp("N",A) == 0){
+    return false;
+  }
+}
+
 
 /* Util functions */
 

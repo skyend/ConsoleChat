@@ -139,22 +139,18 @@ int main ( int argc, char * argv[] )
 		
 	      }
 	      else{ 
-		if( false ){ // Echo
-		  write( _client->fd , buf, packet_len); 
-		}else{ // Packet
-		  stream_state stream_result;
+		stream_state stream_result;
+		
+		// 패킷 저장
+		stream_result = stream_put_to_ci(_client, buf, packet_len);
+		
+		// 패킷 저장후 패킷 스트림 상태에 따라 처리
+		if( stream_result == STREAM_END ){
+		  stream_interpreter(_client);
+		} 
+		
 		  
-		  // 패킷 저장
-		  stream_result = stream_put_to_ci(_client, buf, packet_len);
-		  
-		  // 패킷 저장후 패킷 스트림 상태에 따라 처리
-		  if( stream_result == STREAM_END ){
-		    stream_interpreter(_client);
-		  } 
-		  
-		  
-		  
-		}
+		
 	      }
 	    }
 	  }
@@ -400,7 +396,9 @@ result stream_interpreter(client *_client )
       client_ptr = c_search_from_name(prmc->name);
       
       // 프로토콜 구조체 세팅
-      strcpy(psc.who_name, prmc->name);
+      // 어떤 클라이언트가 요청 했는지 전달 하기 위해서 
+      // 이름 복사 [클라1]의 이름을 대입
+      memcpy(psc.who_name, _client->name, NAME_SIZE);
       
       
       
@@ -440,7 +438,10 @@ result stream_interpreter(client *_client )
 
       // 대상클라이언트 찾아서 주소 대입 
       client_ptr = c_search_from_name(pac->who_name);
-
+      
+      
+      printf("- [protocol] RESPONSE_ACCEPT_CHAT \n");
+      
       // 응답한 클라이언트가 요청한 클라이언트가 대상과 일치하는지 확인하고
       // 요청한 클라이언트의 상태가 기다리는 중이 아니고
       // 일치하지 않는다면 진행안함
@@ -452,7 +453,7 @@ result stream_interpreter(client *_client )
 	
 	break;
       }
-
+      
       // 대상 클라이언트가 유효한지 확인
       if( client_ptr != NULL ){
 	
@@ -487,6 +488,7 @@ result stream_interpreter(client *_client )
 	  strcpy(pncc.who_name, client_ptr -> name );
 	  stream_sender(_client->fd, NOTICE_CHAT_CONNECT, &pncc, sizeof( pro_notice_chat_connect));
 	  
+	  printf("chat connected [%s] <-O-> [%s] \n", client_ptr->name, _client->name);
 	} 
 	else if ( pac->agree == false ) // 채팅 요청 거부
 	  {
@@ -512,7 +514,7 @@ result stream_interpreter(client *_client )
 	    strcpy(pncc.who_name, client_ptr -> name );
 	    stream_sender(_client->fd, NOTICE_CHAT_CONNECT, &pncc, sizeof( pro_notice_chat_connect));
 	    
-	    
+	    printf("chat connected [%s] <-/-> [%s] \n", client_ptr->name, _client->name);	    
 	  }
       }
       
@@ -612,7 +614,7 @@ void send_client_list(client *_client){
       available_count++;
     }
   }
-  
+  //printf("available count : %d\n", available_count);
   // 스트림 전송
   stream_sender( _client->fd, 
 		 RESPONSE_LIST, 
@@ -626,6 +628,7 @@ void send_client_list(client *_client){
 /* Util functions */
 
 // 헤더 정보 출력
+
 void print_s_header(s_header *header)
 {
   printf("- header DESC\n\tSTS: 0x%x \n\ttype: %d\n\tstream_body_size: %d\n\tcomplete: %d\n", (int)header->STS, (int)header->type, (int)header->stream_body_size, (int)header->complete);
