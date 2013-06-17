@@ -83,8 +83,12 @@ int main ( int argc, char * argv[] )
     
     print_by_state(state, &client);
     
-    if( (fd_num = select( fd_max+1, &temps, 0, 0, &timeout)) == -1 )
+    //    if( (fd_num = select( fd_max+1, &temps, 0, 0, &timeout)) == -1 )
+    //      break;
+
+    if( (fd_num = select( fd_max+1, &temps, 0, 0, NULL)) == -1 )
       break;
+
     
     if( fd_num == 0 )
       continue;
@@ -175,14 +179,47 @@ int main ( int argc, char * argv[] )
 		
 	      case cstate_chat :
 		{
-		  pro_transfer_chat_message ptcm;
+		  pro_transfer_chat_message *ptcm = malloc(sizeof(pro_transfer_chat_message));
 		  
 		  // 메세지 입력받음
-		  scanf(" %s",ptcm.message);
+		  //fgets(ptcm->message, 1, stdin);
+		  //scanf(" %s",ptcm->message);
+
+		  //fprintf(stdout, "Enter msg: ");
+		  //fgets(ptcm->message, MESSAGE_MAX_SIZE, stdin);
+
+		  // 줄바꿈 문자 치환
+		  //ptcm->message[strlen(ptcm->message)] = '\0';
+
+		  //printf("Input \n");
+		  
+		  // stdin 읽기
+		  read(0, ptcm->message, MESSAGE_MAX_SIZE);
+
+		  // 마지막 개행문자를 널문자로 변경
+		  ptcm->message[strlen(ptcm->message)-1] = '\0';
+		  
+		  //printf("length : %d \n", (int)strlen(ptcm->message));
+		  
+		  // 첫번째 문자가 q나 Q이고 두번째 문자가 널문자이면
+		  if( (*(ptcm->message) == 'Q' || *(ptcm->message) == 'q') &&
+		      (strlen(ptcm->message)) == 1 ){
+		    // 채팅 종료 통보
+
+		    
+		    stream_sender(client.fd, NOTICE_CHAT_END,
+				  &tmpbyte, sizeof( char ) );
+		    
+		    // 상태 되돌리기
+		    //state = cstate_command_input;
+		    
+		  }
+		  
+		  //printf("%s\n", ptcm->message);
 		  
 		  stream_sender(client.fd, SEND_MESSAGE_TO_ONE,
-				&ptcm, sizeof( pro_transfer_chat_message ) );
-
+				ptcm, sizeof( pro_transfer_chat_message ) );
+		  
 		}
 		break;
 	      default :
@@ -192,7 +229,7 @@ int main ( int argc, char * argv[] )
 		
 	      }
 	      
-	
+	      
 	      
 	    } else if ( i == sock ){ // Read
 	      /*
@@ -238,7 +275,7 @@ void print_by_state(client_state state, client* _client)
 {
   switch ( state ){
   case cstate_command_input :
-	
+    printf("NAME : [%s] \n", _client->name); // 클라이언트 이름 출력
     printf("------------------- Commands --------------------\n");
     printf("\t[%d] 이름 등록(로그인) \n", ccmd_register_name);
     printf("\t[%d] 채팅 요청 \n", ccmd_request_chat);
@@ -276,7 +313,7 @@ void print_by_state(client_state state, client* _client)
   case cstate_chat :
     printf("---------------------------------------\n");
     printf("| 나:%s 상대:%s \n",_client->name, _client->p2p_name);
-    printf("---------------------------------------\n");
+
 
   default :
     break;
@@ -286,9 +323,9 @@ void print_by_state(client_state state, client* _client)
 
 void request_client_list(int fd)
 {
-
   
-  stream_sender( fd, REQUEST_LIST, &tmpbyte, 1);  
+  
+  stream_sender( fd, REQUEST_LIST, &tmpbyte, 1);
   
 }
 
@@ -350,7 +387,7 @@ stream_state stream_put_to_ci(client * _client, void *data, int size )
 	  seeker = sizeof(s_header);
 	} else {
 	  // 유효하지 않은 헤더라면 프로그램 종료
-	  error_handling("유효하지 않은 헤더입니다.");
+	  //error_handling("유효하지 않은 헤더입니다.");
 	}
       } 
     else if ( _client->stream_state == STREAM_REMAIN ){
@@ -375,7 +412,7 @@ stream_state stream_put_to_ci(client * _client, void *data, int size )
       
       //누적 길이 증가
       _client->stream_body_length++;
-
+      
       // 받을 사이즈와 현재 사이즈가 같다면
       if( _client->stream_body_length == _client->stream_header.stream_body_size ){
 
@@ -481,6 +518,7 @@ result stream_interpreter(client *_client )
       
       if( pncc->conn_state == connected ){
 	printf("=== [%s] 님과의 채팅이 시작되었습니다. ===\n", pncc->who_name );
+	printf("= 채팅을 그만두시려면 : 'Q/q' 를 입력하여 주세요. \n");
 	
 	// 공지 후 채팅 모드로
 	state = cstate_chat;
@@ -489,6 +527,18 @@ result stream_interpreter(client *_client )
 	memcpy(_client->p2p_name,pncc->who_name, NAME_SIZE);
 	_client->p2p_conn_state = connected;
 
+      } else if ( pncc->conn_state == broken ){
+	
+	printf("=== [%s] 님과의 채팅이 끝났습니다. ===\n", _client->p2p_name );
+	printf(" 메인으로 돌아갑니다. \n");
+
+	// p2p 이름 초기화
+	memset(_client->p2p_name,0, NAME_SIZE);
+	
+	// 연결 해제 상태
+	_client->p2p_conn_state = broken;
+	
+	state = cstate_command_input;
       }
     }
     break;
@@ -498,7 +548,7 @@ result stream_interpreter(client *_client )
       pro_transfer_chat_message *ptcm = (pro_transfer_chat_message*)_client->stream_body;
       
       //printf("[%s] : %s \n", ptcm->who_name, ptcm->message );
-      printf("상대방: %s \n",  ptcm->message );
+      printf("상대방: \"%s\"\n",  ptcm->message );
       
     }
     break;

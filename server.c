@@ -117,7 +117,7 @@ int main ( int argc, char * argv[] )
 	      
 	      // 패킷가져옴
 	      packet_len = read(i , buf, BUF_SIZE);
-	      //printf("arrived text : %s \n", buf );
+	      printf("arrived packet %d byte\n", packet_len );
 	      
 	      
 	      
@@ -314,8 +314,10 @@ stream_state stream_put_to_ci(client * _client, void *data, int size )
 	  // seeker 이동 ( 헤더의 끝으로 )
 	  seeker = sizeof(s_header);
 	} else {
-	  // 유효하지 않은 헤더라면 프로그램 종료
-	  error_handling("유효하지 않은 헤더입니다.");
+	  
+	  // 유효하지 않은 헤더 에러 전송
+	  error_sender( _client->fd, invalid_header_arrived );
+
 	}
       } 
     else if ( _client->stream_state == STREAM_REMAIN ){
@@ -532,17 +534,61 @@ result stream_interpreter(client *_client )
       pro_transfer_chat_message *ptcm = 
 	(pro_transfer_chat_message*)c1->stream_body;
       
+      printf("- SEND MESSAGE : %s \n\tfrom:\n", ptcm->message);
       
       // 연결상태가 정상이고 상대 클라이언트가 활성상태이면 
       // 메세지 전송
       if( c1->p2p_conn_state == connected  && c2->available == true ){
 	// 트래픽 절약을 위한 사이즈 변경
-	stream_sender(c2->fd, TRANSFER_CHAT_MESSAGE, &ptcm, 
+	stream_sender(c2->fd, TRANSFER_CHAT_MESSAGE, ptcm, 
 		      sizeof(pro_transfer_chat_message) -
 		      MESSAGE_MAX_SIZE + strlen(ptcm->message) );
       }
       
       
+    }
+    break;
+  case NOTICE_CHAT_END :
+    {
+      /* 
+	 채팅을 그만두겠다고 알림이 오면 양쪽의 연결을 끊어주고 알린다.
+       */
+      client * client2 = NULL;
+      pro_notice_chat_connect pncc;
+      pncc.conn_state = broken;
+
+      // 상대방 클라이언트 찾기
+      client2 = c_search_from_name(_client->p2p_name);
+
+      // 클라이언트를 못 찾았다면 
+      if ( client2 == NULL ){
+	printf("[error] client2 is NULL \n");
+
+
+
+	// 연결상태 변경
+	_client    -> p2p_conn_state = broken;
+
+	// 혼자 연결 하고 있던것이므로 알려줌
+	stream_sender(_client->fd, NOTICE_CHAT_CONNECT, &pncc, sizeof( pro_notice_chat_connect));
+	
+	
+	break;
+      }
+
+
+
+      
+      // 상태 변경
+      client2    -> p2p_conn_state = broken;
+      _client    -> p2p_conn_state = broken;
+      
+      
+      stream_sender(client2->fd, NOTICE_CHAT_CONNECT, &pncc, sizeof( pro_notice_chat_connect));
+      
+      stream_sender(_client->fd, NOTICE_CHAT_CONNECT, &pncc, sizeof( pro_notice_chat_connect));
+      
+      printf("chat end [%s] <-=-> [%s] \n", client2->name, _client->name);
     }
     break;
   case REQUEST_LIST :

@@ -79,6 +79,7 @@ typedef enum {
 
   // Notice
   NOTICE_CHAT_CONNECT,
+  NOTICE_CHAT_END, // 채팅을 그만 하겠다고 알림 
 
   // Suggest
   SUGGEST_CHAT,
@@ -106,7 +107,7 @@ typedef enum {
 
 typedef enum{
   sent_chat_accept_to_invalid_client, //잘못된 대상에게 채팅허가 메세지를 보냄
-  
+  invalid_header_arrived,
 }error_code;
 
 /** Structure **/
@@ -198,6 +199,7 @@ typedef struct PRO_TRANSFER_CHAT_MESSAGE {
 #include <unistd.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 
 
 /** Variable **/
@@ -244,7 +246,6 @@ void stream_sender(int fd, stream_purposes type, void *data_ptr, int size){
   header.complete = true;
   
   write( fd , &header, sizeof(s_header) );
-  //for( i = 0 ; i < 1000000 ; i++ );
   write( fd , (char*)data_ptr, size );
   
 }
